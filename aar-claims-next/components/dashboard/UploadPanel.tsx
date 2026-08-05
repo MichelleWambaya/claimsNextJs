@@ -3,6 +3,7 @@
 import { useState } from "react";
 import * as XLSX from "xlsx";
 import { mapHeaders, mapRow } from "@/lib/columnMapping";
+import { trimSheetRange } from "@/lib/xlsxUtils";
 
 const CHUNK_SIZE = 2000;
 
@@ -28,7 +29,20 @@ export default function UploadPanel({ sessionId, onDone }: { sessionId: string; 
         const buf = await file.arrayBuffer();
         const wb = XLSX.read(buf, { type: "array" });
         const sheetName = wb.SheetNames[0];
-        rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: "" });
+        const ws = wb.Sheets[sheetName];
+        // Some export tools leave a sheet's declared "used range" far
+        // larger than its actual content (e.g. formatting once applied
+        // to a whole row/column makes Excel report the range as
+        // extending to row 1,048,576). SheetJS's sheet_to_json walks
+        // the ENTIRE declared range cell-by-cell, which can take minutes
+        // or effectively freeze the tab even for a file with only a
+        // few hundred real rows. Fix: recompute the real bounding box
+        // from the cells that actually exist (SheetJS stores them
+        // sparsely as object keys) before parsing — this scans in time
+        // proportional to real data, not the declared range, regardless
+        // of how bloated the file is.
+        trimSheetRange(ws);
+        rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
       }
     } catch (err) {
       setStatus("error");
