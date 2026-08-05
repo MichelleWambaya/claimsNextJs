@@ -3,6 +3,7 @@ import * as XLSX from "xlsx";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { listFolder, downloadFile, refreshAccessToken } from "@/lib/msGraph";
 import { mapHeaders, mapRow } from "@/lib/columnMapping";
+import { trimSheetRange } from "@/lib/xlsxUtils";
 
 const INSERT_BATCH = 2000;
 
@@ -77,7 +78,9 @@ export async function POST(req: NextRequest) {
     const buf = await downloadFile(downloadUrl);
     const wb = XLSX.read(buf, { type: "array" });
     const sheetName = wb.SheetNames[0];
-    const rows: Record<string, unknown>[] = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: "" });
+    const ws = wb.Sheets[sheetName];
+    trimSheetRange(ws); // see lib/xlsxUtils.ts for why — bloated-declared-range fix, server-side
+    const rows: Record<string, unknown>[] = XLSX.utils.sheet_to_json(ws, { defval: "" });
 
     if (rows.length === 0) {
       await admin.from("source_files").update({ status: "error", schema_issues: [{ kind: "empty_file" }] }).eq("id", sourceFile.id);
