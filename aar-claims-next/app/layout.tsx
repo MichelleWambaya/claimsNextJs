@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "AAR Claims Forensic Audit",
-  description: "Claims forensic audit platform for AAR Insurance Kenya",
+  title: "AAR Claims Quality Assurance",
+  description: "Claims Quality Assurance platform for AAR Insurance Kenya",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
