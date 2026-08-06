@@ -62,7 +62,7 @@ export default function SignupPage() {
     <div className="min-h-screen flex items-center justify-center bg-white">
       <form onSubmit={handleSubmit} className="w-[340px] border rounded-xl p-6">
         <div className="font-semibold text-lg mb-1">
-          AAR <span className="text-aar-orange">Audit</span>
+          AAR Claims <span className="text-aar-orange">QA</span>
         </div>
         <h1 className="text-base font-medium mb-4">Create account</h1>
 
