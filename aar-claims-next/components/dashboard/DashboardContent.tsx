@@ -153,7 +153,7 @@ export default function DashboardContent({ sessionId }: { sessionId: string }) {
     <div className="p-6 max-w-6xl mx-auto">
       <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
         <div>
-          <h1 className="text-xl font-semibold">AAR Claims Forensic Audit</h1>
+          <h1 className="text-xl font-semibold">AAR Claims QA</h1>
           <p className="text-sm text-gray-500">{loading ? "Loading…" : `${inRange.length} flags in range`}</p>
         </div>
         <div className="flex gap-2 items-center flex-wrap">
