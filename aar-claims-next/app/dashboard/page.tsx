@@ -75,7 +75,7 @@ export default function DashboardPage() {
     <div className="flex min-h-screen">
       <aside className="w-52 border-r p-4 flex flex-col">
         <div className="font-semibold mb-6">
-          AAR <span className="text-aar-orange">Audit</span>
+          Claims <span className="text-aar-orange">QA</span>
         </div>
         <nav className="flex flex-col gap-2 text-sm">
           {NAV.map((item) => (
