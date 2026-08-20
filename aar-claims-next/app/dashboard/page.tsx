@@ -1,10 +1,14 @@
 "use client";
 
-// Forces per-request rendering instead of build-time static generation —
-// this page depends on the signed-in user's session, which doesn't exist
-// at build time. Without this, `next build` tries to prerender it anyway
-// and crashes (this is exactly the error that surfaced on Vercel).
-export const dynamic = "force-dynamic";
+// BUG FIX: see login/page.tsx for the full explanation — exporting
+// `dynamic` from a "use client" file is disallowed by Next.js and
+// fails `next build` with an explicit error. This page's session
+// lookup happens in useEffect (client-side, after hydration), not
+// during server-side prerendering, so nothing here actually depends on
+// forcing per-request rendering — removing the export doesn't
+// reintroduce the original prerendering crash that export was meant to
+// fix (that crash, if still relevant, belongs on a Server Component,
+// like the root page.tsx which legitimately keeps `dynamic = "force-dynamic"`).
 
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
