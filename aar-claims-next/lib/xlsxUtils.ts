@@ -14,7 +14,18 @@ import * as XLSX from "xlsx";
 // rather than a dense array regardless of the declared range, so
 // scanning Object.keys(ws) costs time proportional to REAL data only —
 // never the bloated declared range. Call this before sheet_to_json.
-export function trimSheetRange(ws: XLSX.WorkSheet): void {
+//
+// BUG FIX: this used to call Object.keys(ws) unconditionally. If the
+// workbook has zero sheets, or the requested sheet name isn't actually
+// present in wb.Sheets (empty/corrupted/password-protected file), `ws`
+// is `undefined`, and Object.keys(undefined) throws
+// "Cannot convert undefined or null to object" — which is exactly the
+// error surfacing on the upload page. Guard against that here so the
+// caller gets a clear signal instead of a cryptic native TypeError.
+export function trimSheetRange(ws: XLSX.WorkSheet | undefined): void {
+  if (!ws) {
+    throw new Error("That file doesn't contain a readable sheet — it may be empty, corrupted, or password-protected.");
+  }
   let maxRow = 0;
   let maxCol = 0;
   let found = false;
