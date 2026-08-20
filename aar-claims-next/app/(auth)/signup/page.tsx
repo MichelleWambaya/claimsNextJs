@@ -1,6 +1,9 @@
 "use client";
 
-export const dynamic = "force-dynamic";
+// BUG FIX: see login/page.tsx for the full explanation — exporting
+// `dynamic` from a "use client" file is disallowed by Next.js and
+// fails `next build`. Removed; not needed here since all data access
+// happens client-side inside handleSubmit, not during prerendering.
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
