@@ -73,8 +73,29 @@ export function isMsOAuthConfigured(): boolean {
 
 // Lists a folder's contents via delegated Graph access, and downloads a
 // specific item's bytes. No app registration beyond the OAuth app itself.
+//
+// BUG FIX: this used to do
+//   `root:/${encodeURIComponent(folderPath)}:/children`
+// which breaks in two ways:
+//   1. encodeURIComponent() escapes "/" as "%2F", so any nested path
+//      (e.g. "QA DATA SOURCE FILES/2024") got sent as one literal
+//      segment containing "%2F" instead of separate path segments —
+//      Graph rejects this (404), so subfolder browsing never worked.
+//   2. When folderPath is empty (browsing the root), the old code
+//      produced ".../root:/:/children", which isn't a valid Graph path
+//      form — the root has no ":path:" segment; it must be addressed as
+//      ".../root/children" directly.
+// Fix: encode each path segment individually and join with literal "/",
+// and branch to the plain root/children endpoint when there's no path.
 export async function listFolder(accessToken: string, folderPath: string) {
-  const url = `https://graph.microsoft.com/v1.0/me/drive/root:/${encodeURIComponent(folderPath)}:/children`;
+  const trimmed = folderPath.trim().replace(/^\/+|\/+$/g, "");
+  const url = trimmed
+    ? `https://graph.microsoft.com/v1.0/me/drive/root:/${trimmed
+        .split("/")
+        .map(encodeURIComponent)
+        .join("/")}:/children`
+    : `https://graph.microsoft.com/v1.0/me/drive/root/children`;
+
   const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
   if (!res.ok) throw new Error(`Graph list folder failed: ${await res.text()}`);
   const body = await res.json();
