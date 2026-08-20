@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 
+const PAGE_SIZE = 1000;
+
 export async function POST(req: NextRequest) {
   const supabase = createClient();
   const { data: authData } = await supabase.auth.getUser();
@@ -16,16 +18,31 @@ export async function POST(req: NextRequest) {
 
   const admin = createServiceRoleClient();
 
-  let query = admin
-    .from("flags")
-    .select("flag_type, claim_rows(approved_amount, visit_date)")
-    .eq("audit_session_id", sessionId);
-  if (categoryFilter) query = query.eq("flag_type", categoryFilter);
+  // BUG FIX: this used to be a single unbounded .select(), which
+  // PostgREST silently caps at 1000 rows. Any session with more than
+  // 1000 flags (easily the case per the app's own "hundreds of
+  // thousands of rows" design goal) produced a report with an
+  // undercounted totalFlags/totalAmount. Paginate the same way
+  // /api/flags/recompute already does for claim_rows.
+  const flagRows: any[] = [];
+  let from = 0;
+  while (true) {
+    let query = admin
+      .from("flags")
+      .select("flag_type, claim_rows(approved_amount, visit_date)")
+      .eq("audit_session_id", sessionId)
+      .range(from, from + PAGE_SIZE - 1);
+    if (categoryFilter) query = query.eq("flag_type", categoryFilter);
 
-  const { data: flagRows, error } = await query;
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    const { data: page, error } = await query;
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (!page || page.length === 0) break;
+    flagRows.push(...page);
+    if (page.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
 
-  const inRange = (flagRows || []).filter((f: any) => {
+  const inRange = flagRows.filter((f: any) => {
     const d = f.claim_rows?.visit_date;
     if (!d) return false;
     if (rangeFrom && d < rangeFrom) return false;
