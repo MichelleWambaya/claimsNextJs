@@ -28,6 +28,15 @@ export default function UploadPanel({ sessionId, onDone }: { sessionId: string; 
       } else {
         const buf = await file.arrayBuffer();
         const wb = XLSX.read(buf, { type: "array" });
+        // BUG FIX: previously went straight to wb.Sheets[wb.SheetNames[0]]
+        // with no check that a sheet actually exists. A workbook with no
+        // sheets (or a first sheet name that isn't really in wb.Sheets)
+        // made sheetName/ws undefined, and trimSheetRange's
+        // Object.keys(ws) then threw "Cannot convert undefined or null
+        // to object" — a confusing native error instead of a clear one.
+        if (wb.SheetNames.length === 0) {
+          throw new Error("This workbook has no sheets.");
+        }
         const sheetName = wb.SheetNames[0];
         const ws = wb.Sheets[sheetName];
         // Some export tools leave a sheet's declared "used range" far
@@ -78,8 +87,15 @@ export default function UploadPanel({ sessionId, onDone }: { sessionId: string; 
       }),
     });
     if (!sfRes.ok) {
+      // BUG FIX: previously showed a fixed generic message with no
+      // detail at all. Surface the server's actual error when there is
+      // one, falling back to the HTTP status rather than
+      // sfRes.statusText — statusText is always "" on HTTP/2, which is
+      // what Vercel serves in production, so that fallback was
+      // frequently blank.
+      const body = await sfRes.json().catch(() => ({}));
       setStatus("error");
-      setMessage("Couldn't register this upload — try again.");
+      setMessage(`Couldn't register this upload: ${body.error || `request failed (HTTP ${sfRes.status})`}`);
       return;
     }
     const sourceFile = await sfRes.json();
@@ -114,9 +130,15 @@ export default function UploadPanel({ sessionId, onDone }: { sessionId: string; 
       });
 
       if (!res.ok) {
+        // BUG FIX: same HTTP/2-statusText issue as above — fall back to
+        // the status code, not the (usually empty) statusText.
         const body = await res.json().catch(() => ({}));
         setStatus("error");
-        setMessage(`Upload failed partway through (${sentSoFar}/${mappedRows.length} rows sent): ${body.error || res.statusText}`);
+        setMessage(
+          `Upload failed partway through (${sentSoFar}/${mappedRows.length} rows sent): ${
+            body.error || `request failed (HTTP ${res.status})`
+          }`
+        );
         return;
       }
 
