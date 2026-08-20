@@ -43,3 +43,29 @@ export function trimSheetRange(ws: XLSX.WorkSheet | undefined): void {
     ws["!ref"] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: maxRow, c: maxCol } });
   }
 }
+
+// BUG FIX: callers used to always read wb.Sheets[wb.SheetNames[0]] — the
+// FIRST tab, unconditionally. That breaks on very common real-world
+// files: a cover/instructions tab before the data tab, or a
+// chartsheet/dialogsheet (which appear in wb.SheetNames but have no
+// entry in wb.Sheets at all, since they aren't regular worksheets).
+// None of that means the file is empty, corrupted, or
+// password-protected — it just means the data isn't on tab 1. Walk the
+// sheets in order and use the first one that's an actual worksheet with
+// real populated cells.
+export function pickDataSheet(wb: XLSX.WorkBook): { sheetName: string; ws: XLSX.WorkSheet } {
+  if (!wb.SheetNames || wb.SheetNames.length === 0) {
+    throw new Error("This workbook has no sheets.");
+  }
+  for (const name of wb.SheetNames) {
+    const candidate = wb.Sheets[name];
+    if (!candidate) continue; // not a real worksheet (e.g. a chartsheet/dialogsheet)
+    const hasData = Object.keys(candidate).some(
+      (k) => k[0] !== "!" && (candidate as Record<string, XLSX.CellObject>)[k]?.v !== undefined && (candidate as Record<string, XLSX.CellObject>)[k]?.v !== ""
+    );
+    if (hasData) return { sheetName: name, ws: candidate };
+  }
+  throw new Error(
+    "None of the sheets in this workbook contain any data. If your claims data is on a specific tab, check that it isn't empty or hidden behind a cover sheet."
+  );
+}
