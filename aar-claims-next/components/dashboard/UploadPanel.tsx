@@ -3,7 +3,7 @@
 import { useState } from "react";
 import * as XLSX from "xlsx";
 import { mapHeaders, mapRow } from "@/lib/columnMapping";
-import { trimSheetRange } from "@/lib/xlsxUtils";
+import { pickDataSheet, trimSheetRange } from "@/lib/xlsxUtils";
 
 const CHUNK_SIZE = 2000;
 
@@ -28,17 +28,12 @@ export default function UploadPanel({ sessionId, onDone }: { sessionId: string; 
       } else {
         const buf = await file.arrayBuffer();
         const wb = XLSX.read(buf, { type: "array" });
-        // BUG FIX: previously went straight to wb.Sheets[wb.SheetNames[0]]
-        // with no check that a sheet actually exists. A workbook with no
-        // sheets (or a first sheet name that isn't really in wb.Sheets)
-        // made sheetName/ws undefined, and trimSheetRange's
-        // Object.keys(ws) then threw "Cannot convert undefined or null
-        // to object" — a confusing native error instead of a clear one.
-        if (wb.SheetNames.length === 0) {
-          throw new Error("This workbook has no sheets.");
-        }
-        const sheetName = wb.SheetNames[0];
-        const ws = wb.Sheets[sheetName];
+        // BUG FIX: previously always read wb.Sheets[wb.SheetNames[0]] —
+        // the first tab, unconditionally. Files with a cover/instructions
+        // tab first, or a chartsheet/dialogsheet in that slot, aren't
+        // corrupted — they just don't have data on tab 1. pickDataSheet
+        // scans all sheets and picks the first one with real content.
+        const { ws } = pickDataSheet(wb);
         // Some export tools leave a sheet's declared "used range" far
         // larger than its actual content (e.g. formatting once applied
         // to a whole row/column makes Excel report the range as
