@@ -13,8 +13,11 @@ export default function SyncPanel({ sessionId }: { sessionId: string }) {
   async function handleConnect() {
     const res = await fetch("/api/ms-oauth/connect");
     if (!res.ok) {
+      // BUG FIX: fell back to res.statusText, which is always "" on
+      // HTTP/2 (what Vercel serves in production) — that produced the
+      // blank "Failed: " message. Fall back to the HTTP status instead.
       const body = await res.json().catch(() => ({}));
-      setStatus(body.error || "Couldn't start the Microsoft connection.");
+      setStatus(body.error || `Couldn't start the Microsoft connection (HTTP ${res.status}).`);
       return;
     }
     const { authorizeUrl } = await res.json();
@@ -28,7 +31,7 @@ export default function SyncPanel({ sessionId }: { sessionId: string }) {
     setBusy(false);
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      setStatus(body.error || "Couldn't list that folder.");
+      setStatus(body.error || `Couldn't list that folder (HTTP ${res.status}).`);
       setItems([]);
       return;
     }
@@ -42,19 +45,33 @@ export default function SyncPanel({ sessionId }: { sessionId: string }) {
     }
     setBusy(true);
     setStatus(`Ingesting ${item.name}…`);
-    const res = await fetch("/api/ms-oauth/sync", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sessionId, fileName: item.name, downloadUrl: item.downloadUrl }),
-    });
-    setBusy(false);
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      setStatus(`Failed: ${body.error || res.statusText}`);
-      return;
+    try {
+      const res = await fetch("/api/ms-oauth/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId, fileName: item.name, downloadUrl: item.downloadUrl }),
+      });
+      if (!res.ok) {
+        // BUG FIX: same blank-statusText issue as above — this is what
+        // was showing up as "Failed: -" (i.e. "Failed: " with nothing
+        // after it) whenever the server error wasn't clean JSON, e.g. a
+        // platform-level timeout/502 rather than our own error response.
+        const body = await res.json().catch(() => ({}));
+        setStatus(`Failed: ${body.error || `request failed (HTTP ${res.status})`}`);
+        return;
+      }
+      const body = await res.json();
+      setStatus(`Ingested ${body.rowsIngested.toLocaleString()} rows from ${item.name}.`);
+    } catch (err) {
+      // BUG FIX: fetch() itself can reject (network error, or the
+      // serverless function timing out and the connection dropping
+      // before any HTTP response comes back at all) — this wasn't
+      // caught before, so it failed silently with `busy` stuck `true`
+      // and no message shown.
+      setStatus(`Failed: ${(err as Error).message || "network error — the request may have timed out"}`);
+    } finally {
+      setBusy(false);
     }
-    const body = await res.json();
-    setStatus(`Ingested ${body.rowsIngested.toLocaleString()} rows from ${item.name}.`);
   }
 
   return (
