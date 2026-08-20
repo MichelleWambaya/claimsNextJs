@@ -77,6 +77,21 @@ export async function POST(req: NextRequest) {
   try {
     const buf = await downloadFile(downloadUrl);
     const wb = XLSX.read(buf, { type: "array" });
+
+    // BUG FIX: previously indexed straight into wb.Sheets[wb.SheetNames[0]]
+    // with no check that a sheet actually exists. A workbook with zero
+    // sheets made `ws` undefined, and trimSheetRange's Object.keys(ws)
+    // then threw "Cannot convert undefined or null to object" — an
+    // unhelpful native TypeError instead of a clear, actionable one.
+    // This is also the failure that was showing up as "Failed: -" on
+    // the sync page: the thrown error was caught below and returned as
+    // { error: err.message }, but if it happened to throw again before
+    // reaching that JSON response (or the platform timed out), the
+    // client's fallback to res.statusText produced a blank message
+    // (statusText is always "" on HTTP/2, which Vercel serves in prod).
+    if (wb.SheetNames.length === 0) {
+      throw new Error("This workbook has no sheets.");
+    }
     const sheetName = wb.SheetNames[0];
     const ws = wb.Sheets[sheetName];
     trimSheetRange(ws); // see lib/xlsxUtils.ts for why — bloated-declared-range fix, server-side
