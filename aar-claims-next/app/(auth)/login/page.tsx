@@ -1,6 +1,16 @@
 "use client";
 
-export const dynamic = "force-dynamic";
+// BUG FIX: `export const dynamic = "force-dynamic"` was here alongside
+// "use client" — Next.js does not allow exporting route-segment config
+// (dynamic, revalidate, fetchCache, runtime, etc.) from a file marked
+// "use client". `next build` fails outright with:
+//   "You are attempting to export "dynamic" from a component marked
+//    with "use client", which is disallowed."
+// This is very likely why "vercel fails to deploy new changes" — this
+// export needs to be removed here. It isn't needed anyway: this page's
+// data loading (auth.signInWithPassword) happens client-side inside an
+// event handler, not during server-side prerendering, so there's no
+// build-time cookie/session dependency to force dynamic rendering for.
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
