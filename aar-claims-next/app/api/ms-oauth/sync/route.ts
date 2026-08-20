@@ -3,7 +3,7 @@ import * as XLSX from "xlsx";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { listFolder, downloadFile, refreshAccessToken } from "@/lib/msGraph";
 import { mapHeaders, mapRow } from "@/lib/columnMapping";
-import { trimSheetRange } from "@/lib/xlsxUtils";
+import { pickDataSheet, trimSheetRange } from "@/lib/xlsxUtils";
 
 const INSERT_BATCH = 2000;
 
@@ -46,7 +46,10 @@ export async function GET(req: NextRequest) {
         .map((i) => ({ id: i.id, name: i.name, size: i.size, downloadUrl: i["@microsoft.graph.downloadUrl"] }))
     );
   } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: err.status || 500 });
+    // Same fix as the POST handler below: guarantee a real string
+    // reaches the client instead of risking a dropped "error" key.
+    const message = err?.message || (typeof err === "string" ? err : String(err)) || "Couldn't list that folder.";
+    return NextResponse.json({ error: message }, { status: err?.status || 500 });
   }
 }
 
@@ -78,22 +81,12 @@ export async function POST(req: NextRequest) {
     const buf = await downloadFile(downloadUrl);
     const wb = XLSX.read(buf, { type: "array" });
 
-    // BUG FIX: previously indexed straight into wb.Sheets[wb.SheetNames[0]]
-    // with no check that a sheet actually exists. A workbook with zero
-    // sheets made `ws` undefined, and trimSheetRange's Object.keys(ws)
-    // then threw "Cannot convert undefined or null to object" — an
-    // unhelpful native TypeError instead of a clear, actionable one.
-    // This is also the failure that was showing up as "Failed: -" on
-    // the sync page: the thrown error was caught below and returned as
-    // { error: err.message }, but if it happened to throw again before
-    // reaching that JSON response (or the platform timed out), the
-    // client's fallback to res.statusText produced a blank message
-    // (statusText is always "" on HTTP/2, which Vercel serves in prod).
-    if (wb.SheetNames.length === 0) {
-      throw new Error("This workbook has no sheets.");
-    }
-    const sheetName = wb.SheetNames[0];
-    const ws = wb.Sheets[sheetName];
+    // BUG FIX: previously always read wb.Sheets[wb.SheetNames[0]] — the
+    // first tab, unconditionally. A cover/instructions tab first, or a
+    // chartsheet/dialogsheet in that slot, isn't corruption — it just
+    // means the data isn't on tab 1. pickDataSheet scans all sheets and
+    // uses the first one with real content.
+    const { ws } = pickDataSheet(wb);
     trimSheetRange(ws); // see lib/xlsxUtils.ts for why — bloated-declared-range fix, server-side
     const rows: Record<string, unknown>[] = XLSX.utils.sheet_to_json(ws, { defval: "" });
 
@@ -143,7 +136,28 @@ export async function POST(req: NextRequest) {
     await admin.from("source_files").update({ status: "merged", row_count: mappedRows.length }).eq("id", sourceFile.id);
     return NextResponse.json({ rowsIngested: mappedRows.length });
   } catch (err: any) {
-    await admin.from("source_files").update({ status: "error" }).eq("id", sourceFile.id);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    // BUG FIX: this used to do `{ error: err.message }` unconditionally.
+    // If whatever got thrown isn't a real Error object — some SheetJS
+    // internals throw plain strings, and some failures here could throw
+    // non-Error values — `err.message` is `undefined`, and
+    // JSON.stringify() drops keys whose value is `undefined` entirely.
+    // The client then received `{}` with no "error" field at all, which
+    // is exactly why the sync page showed a bare "HTTP 500" with no
+    // detail. Always coerce to a real string. Also: the status-update
+    // call below can itself fail (e.g. transient DB issue) — if it
+    // throws, it would propagate past this catch and Next.js would
+    // return a generic error page instead of JSON, reproducing the same
+    // blank-message symptom one level up. Wrap it so a logging failure
+    // can never mask the original error.
+    const message = err?.message || (typeof err === "string" ? err : String(err)) || "Unknown error while ingesting the file.";
+    try {
+      await admin
+        .from("source_files")
+        .update({ status: "error", schema_issues: [{ kind: "ingest_error", detail: message }] })
+        .eq("id", sourceFile.id);
+    } catch {
+      // Best-effort status update — don't let this mask the real error below.
+    }
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
