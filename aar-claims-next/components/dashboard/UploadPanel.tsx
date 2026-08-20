@@ -87,6 +87,15 @@ export default function UploadPanel({ sessionId, onDone }: { sessionId: string; 
     setStatus("uploading");
     setProgress({ sent: 0, total: mappedRows.length });
 
+    // BUG FIX: the failure-path message used to read `progress.sent`
+    // from the closure, which still held the value from the render that
+    // started this function — `setProgress` calls inside this loop
+    // don't update that local binding synchronously, so on failure the
+    // message always reported a stale (often 0) count instead of how
+    // far the upload actually got. Track sent-so-far in a plain local
+    // variable instead and use that for both the message and the state.
+    let sentSoFar = 0;
+
     for (let i = 0; i < mappedRows.length; i += CHUNK_SIZE) {
       const chunk = mappedRows.slice(i, i + CHUNK_SIZE);
       const isFirstChunk = i === 0;
@@ -107,11 +116,12 @@ export default function UploadPanel({ sessionId, onDone }: { sessionId: string; 
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         setStatus("error");
-        setMessage(`Upload failed partway through (${progress.sent}/${mappedRows.length} rows sent): ${body.error || res.statusText}`);
+        setMessage(`Upload failed partway through (${sentSoFar}/${mappedRows.length} rows sent): ${body.error || res.statusText}`);
         return;
       }
 
-      setProgress({ sent: Math.min(i + CHUNK_SIZE, mappedRows.length), total: mappedRows.length });
+      sentSoFar = Math.min(i + CHUNK_SIZE, mappedRows.length);
+      setProgress({ sent: sentSoFar, total: mappedRows.length });
     }
 
     setStatus("done");
