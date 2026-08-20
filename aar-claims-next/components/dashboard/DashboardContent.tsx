@@ -17,6 +17,8 @@ const CATEGORIES: { key: string; label: string }[] = [
   { key: "diagnosis_gap", label: "Diagnosis gaps" },
 ];
 
+const FLAGS_PAGE_SIZE = 1000;
+
 type FlagRow = {
   id: string;
   flag_type: string;
@@ -31,6 +33,20 @@ type FlagRow = {
     visit_date: string | null;
   } | null;
 };
+
+// BUG FIX: `new Date(...).toISOString().slice(0, 10)` converts a
+// locally-constructed date to UTC before slicing. For any timezone
+// ahead of UTC (e.g. Nairobi, UTC+3 — this is an AAR Kenya deployment),
+// a local midnight boundary rolls back into the previous UTC calendar
+// day, so "this month"/"this year" ranges silently excluded the last
+// day of the period from every chart, table, and export. Format using
+// the Date's own local fields instead of going through UTC.
+function toLocalISODate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
 
 export default function DashboardContent({ sessionId }: { sessionId: string }) {
   const supabase = createClient();
@@ -48,7 +64,7 @@ export default function DashboardContent({ sessionId }: { sessionId: string }) {
     if (rangeMode === "month") {
       const from = new Date(now.getFullYear(), now.getMonth(), 1);
       const to = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-      return { from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) };
+      return { from: toLocalISODate(from), to: toLocalISODate(to) };
     }
     if (rangeMode === "year") {
       return { from: `${now.getFullYear()}-01-01`, to: `${now.getFullYear()}-12-31` };
@@ -58,17 +74,30 @@ export default function DashboardContent({ sessionId }: { sessionId: string }) {
 
   const loadFlags = useCallback(async () => {
     setLoading(true);
-    let query = supabase
-      .from("flags")
-      .select(
-        "id, flag_type, reason, detail, claim_row_id, claim_rows(member_id, product_name, provider, approved_amount, visit_date)"
-      )
-      .eq("audit_session_id", sessionId)
-      .limit(2000);
-    if (category) query = query.eq("flag_type", category);
+    // BUG FIX: this used to be a single query with `.limit(2000)`, which
+    // silently truncated the dashboard's numbers for any session with
+    // more than 2000 flags — the UI gave no indication the totals were
+    // partial. Paginate through all matching rows instead, same
+    // approach used server-side in /api/flags/recompute.
+    const allRows: FlagRow[] = [];
+    let from = 0;
+    while (true) {
+      let query = supabase
+        .from("flags")
+        .select(
+          "id, flag_type, reason, detail, claim_row_id, claim_rows(member_id, product_name, provider, approved_amount, visit_date)"
+        )
+        .eq("audit_session_id", sessionId)
+        .range(from, from + FLAGS_PAGE_SIZE - 1);
+      if (category) query = query.eq("flag_type", category);
 
-    const { data, error } = await query;
-    if (!error && data) setFlags(data as unknown as FlagRow[]);
+      const { data, error } = await query;
+      if (error || !data) break;
+      allRows.push(...(data as unknown as FlagRow[]));
+      if (data.length < FLAGS_PAGE_SIZE) break;
+      from += FLAGS_PAGE_SIZE;
+    }
+    setFlags(allRows);
     setLoading(false);
   }, [supabase, sessionId, category]);
 
